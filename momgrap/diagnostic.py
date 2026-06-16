@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
+import pickle
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -90,12 +92,18 @@ def run_diagnostic(
     single_fixed: float = 0.3,
     seeds: list[int] | None = None,
     sub_diagnostic: bool = True,
+    cache_path: str | None = "results/diagnostic_cache.pkl",
 ) -> DiagnosticData:
     """Run the delta_task sweep with paired seeds (protocol §6).
 
     All methods/values share the same ``seeds`` so every comparison is paired.
     The full fixed-RMP grid runs only at ``full_grid_deltas`` (compute trim §6);
     elsewhere only adaptive + single-fixed run.
+
+    Checkpointing: each completed run is written to ``cache_path`` immediately, so a
+    crash/disconnect loses nothing — re-running the SAME command resumes, skipping
+    finished runs.  Pass ``cache_path=None`` to disable.  A config fingerprint guards
+    the cache: changing N/G/S/grid starts fresh automatically.
     """
     log = ensure_logging()
     deltas = [0.0, 15.0, 30.0, 45.0, 60.0] if deltas is None else deltas
@@ -104,6 +112,39 @@ def run_diagnostic(
     seeds = list(range(cfg_base.n_seeds)) if seeds is None else seeds
     if single_fixed not in grid_values:
         grid_values = sorted(grid_values + [single_fixed])
+
+    # ----- checkpoint cache (resume across breaks) -----
+    fingerprint = (f"N{cfg_base.pop_size}-G{cfg_base.max_gen}-S{cfg_base.mc_samples}"
+                   f"-D{cfg_base.D}-grid{grid_values}-paired{cfg_base.paired_envs}")
+    cache: dict = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            blob = pickle.load(open(cache_path, "rb"))
+            if blob.get("fingerprint") == fingerprint:
+                cache = blob.get("runs", {})
+                log.info(f"[resume] loaded {len(cache)} completed runs from {cache_path}")
+            else:
+                log.info("[cache] config fingerprint changed -> starting fresh")
+        except Exception as e:  # corrupt/partial cache -> start fresh
+            log.info(f"[cache] could not load ({e}) -> starting fresh")
+
+    def _save_cache():
+        if not cache_path:
+            return
+        os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+        tmp = cache_path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump({"fingerprint": fingerprint, "runs": cache}, f)
+        os.replace(tmp, cache_path)  # atomic — never leaves a half-written cache
+
+    def cached_run(cfg, seed, method, value=None):
+        key = f"{method}|{value}|{cfg.delta_task_deg:g}|{cfg.survival_mode}|{seed}"
+        if key in cache:
+            return tuple(cache[key])
+        out = _run_one(cfg, seed, method, value)
+        cache[key] = out
+        _save_cache()
+        return out
 
     data = DiagnosticData(deltas=deltas, seeds=seeds, single_fixed=single_fixed,
                           grid_values=grid_values, full_grid_deltas=full_grid_deltas)
@@ -114,11 +155,11 @@ def run_diagnostic(
 
         data.adaptive_hv[delta], data.adaptive_rmp[delta] = [], []
         for sd in seeds:
-            hv, rmp = _run_one(cfg, sd, "adaptive")
+            hv, rmp = cached_run(cfg, sd, "adaptive")
             data.adaptive_hv[delta].append(hv)
             data.adaptive_rmp[delta].append(rmp)
 
-        data.single_hv[delta] = [_run_one(cfg, sd, "fixed", single_fixed)[0] for sd in seeds]
+        data.single_hv[delta] = [cached_run(cfg, sd, "fixed", single_fixed)[0] for sd in seeds]
 
         if delta in full_grid_deltas:
             data.grid_hv[delta] = {}
@@ -126,7 +167,7 @@ def run_diagnostic(
                 if v == single_fixed:
                     data.grid_hv[delta][v] = list(data.single_hv[delta])  # reuse
                 else:
-                    data.grid_hv[delta][v] = [_run_one(cfg, sd, "fixed", v)[0] for sd in seeds]
+                    data.grid_hv[delta][v] = [cached_run(cfg, sd, "fixed", v)[0] for sd in seeds]
             # oracle: fixed value with best MEAN HV
             means = {v: float(np.mean(hvs)) for v, hvs in data.grid_hv[delta].items()}
             v_star = max(means, key=means.get)
@@ -141,8 +182,8 @@ def run_diagnostic(
         cfg_h = dataclasses.replace(cfg_base, delta_task_deg=d_conf, survival_mode="hv_contrib")
         data.subdiag = {
             "delta": d_conf,
-            "rank1": [_run_one(cfg_r, sd, "adaptive")[0] for sd in seeds],
-            "hv_contrib": [_run_one(cfg_h, sd, "adaptive")[0] for sd in seeds],
+            "rank1": [cached_run(cfg_r, sd, "adaptive")[0] for sd in seeds],
+            "hv_contrib": [cached_run(cfg_h, sd, "adaptive")[0] for sd in seeds],
         }
     return data
 

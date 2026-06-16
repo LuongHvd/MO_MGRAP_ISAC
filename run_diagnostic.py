@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import os
 import pickle
 
 from momgrap import default_config, smoke_config
@@ -47,6 +48,10 @@ def parse_args(argv=None):
     p.add_argument("--no-subdiag", action="store_true", help="skip rank1-vs-hv_contrib sub-diagnostic")
     p.add_argument("--outdir", default="figures_diag")
     p.add_argument("--save", default="results/diagnostic.pkl")
+    p.add_argument("--cache", default="results/diagnostic_cache.pkl",
+                   help="checkpoint file; re-running the same command resumes from it")
+    p.add_argument("--no-cache", action="store_true", help="disable checkpoint/resume")
+    p.add_argument("--fresh", action="store_true", help="ignore/delete any existing checkpoint")
     p.add_argument("--log-file", default=None)
     p.add_argument("--log-every", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
@@ -74,19 +79,25 @@ def main(argv=None) -> None:
         deltas, grid, full_grid = args.deltas, args.grid, args.full_grid
         seeds = list(range(args.seeds if args.seeds is not None else cfg.n_seeds))
 
+    cache_path = None if args.no_cache else args.cache
+    if args.fresh and cache_path and os.path.exists(cache_path):
+        os.remove(cache_path)
+        log.info(f"[fresh] removed existing checkpoint {cache_path}")
+
     log.info(f"Diagnostic: device={cfg.device} N={cfg.pop_size} G={cfg.max_gen} S={cfg.mc_samples} "
-             f"seeds={len(seeds)} deltas={deltas} full_grid={full_grid} single_fixed={args.single_fixed}")
+             f"seeds={len(seeds)} deltas={deltas} full_grid={full_grid} single_fixed={args.single_fixed} "
+             f"cache={cache_path}")
 
     data = run_diagnostic(
         cfg, deltas=deltas, grid_values=grid, full_grid_deltas=full_grid,
         single_fixed=args.single_fixed, seeds=seeds, sub_diagnostic=not args.no_subdiag,
+        cache_path=cache_path,
     )
 
     log.info("================ DECISION TREE (protocol §7) ================")
     verdict = read_decision_tree(data)
     log.info(f"================ VERDICT: outcome = {verdict.get('outcome')} ================")
 
-    import os
     os.makedirs(os.path.dirname(args.save) or ".", exist_ok=True)
     with open(args.save, "wb") as f:
         pickle.dump({"data": data, "verdict": verdict}, f)
