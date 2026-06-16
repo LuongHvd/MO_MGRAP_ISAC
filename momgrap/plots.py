@@ -39,11 +39,22 @@ def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
     has_inset = bool(data.delta_sweep)
     fig, ax = plt.subplots(figsize=(6, 4.2))
 
-    for m in ("adaptive", "no_transfer", "fixed_rmp"):
-        front = data.unified_fronts.get(m)
-        if front is None or front.shape[0] == 0:
-            continue
-        ax.plot(front[:, 0], front[:, 1], "-o", ms=3, color=_COLORS[m], label=_LABELS[m])
+    # Single curve = the robust front attained by the proposed MO-multitask
+    # framework: the non-dominated envelope over its variants (adaptive / fixed /
+    # no-transfer all share the framework). Plotting one framework front vs the
+    # naive references keeps Fig 1 focused on "the product dominates references"
+    # and the tradeoff; the algorithm comparison lives in Fig 2.
+    import torch
+
+    from .metrics import non_dominated
+
+    parts = [data.unified_fronts[m] for m in ("adaptive", "no_transfer", "fixed_rmp")
+             if data.unified_fronts.get(m) is not None and data.unified_fronts[m].shape[0] > 0]
+    if parts:
+        allpts = np.concatenate(parts, axis=0)
+        env = non_dominated(torch.tensor(allpts)).cpu().numpy()
+        env = env[np.argsort(env[:, 0])]
+        ax.plot(env[:, 0], env[:, 1], "-o", ms=3, color="C0", label="MO-MGRAP (proposed)")
 
     uspa = data.reference["uspa"]
     rnd = data.reference["random"]
@@ -80,7 +91,10 @@ def fig2_hv_over_gen(data: ExperimentData, outdir: str = "figures") -> str:
     os.makedirs(outdir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 4.2))
 
-    for m in ("adaptive", "fixed_rmp", "pooled"):
+    # Focus: multitask transfer (adaptive) vs pooled single-task augmentation.
+    # The fixed-RMP / no-transfer ablation is within seed variance (reported in
+    # text), so it is not overlaid here.
+    for m in ("adaptive", "pooled"):
         hv = data.hv_gen.get(m)
         if hv is None or hv.size == 0:
             continue
@@ -168,6 +182,108 @@ def fig4_rmp_sweep(data: ExperimentData, outdir: str = "figures") -> str | None:
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def _sem(vals) -> float:
+    v = np.asarray(vals, float)
+    return float(v.std(ddof=1) / np.sqrt(v.size)) if v.size > 1 else 0.0
+
+
+def dfig1_hv_vs_delta(data, outdir: str = "figures_diag") -> str:
+    """D-Fig 1 — unified HV vs delta_task: adaptive / oracle / single-fixed (protocol §9)."""
+    os.makedirs(outdir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    deltas = data.deltas
+
+    am = [np.mean(data.adaptive_hv[d]) for d in deltas]
+    ae = [_sem(data.adaptive_hv[d]) for d in deltas]
+    ax.errorbar(deltas, am, yerr=ae, fmt="-o", color="C0", capsize=3, label="MO-MGRAP (adaptive)")
+
+    sm = [np.mean(data.single_hv[d]) for d in deltas]
+    se = [_sem(data.single_hv[d]) for d in deltas]
+    ax.errorbar(deltas, sm, yerr=se, fmt="-s", color="C3", capsize=3,
+                label=f"fixed RMP={data.single_fixed:g} (naïve)")
+
+    od = [d for d in deltas if d in data.oracle_hv]
+    if od:
+        om = [np.mean(data.oracle_hv[d]) for d in od]
+        oe = [_sem(data.oracle_hv[d]) for d in od]
+        ax.errorbar(od, om, yerr=oe, fmt="-^", color="C2", capsize=3,
+                    label="best fixed per Δ (oracle)")
+
+    ax.set_xlabel(r"$\Delta_{\mathrm{task}}$  (inter-task sector separation, deg)")
+    ax.set_ylabel("unified robust HV (mean ± SEM)")
+    ax.set_title("D-Fig 1 — HV vs task conflict")
+    ax.legend(fontsize=8, loc="best")
+    ax.grid(True, alpha=0.3)
+    path = os.path.join(outdir, "dfig1_hv_vs_delta.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def dfig2_rmpstar_vs_delta(data, outdir: str = "figures_diag") -> str:
+    """D-Fig 2 — oracle best-fixed RMP and adaptive's converged RMP vs delta_task (§9)."""
+    os.makedirs(outdir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    deltas = data.deltas
+
+    od = sorted(data.rmp_star)
+    if od:
+        rstar = [data.rmp_star[d] for d in od]
+        ax.plot(od, rstar, "-^", color="C2", ms=8, label="oracle best fixed RMP")
+
+    am = [np.mean(data.adaptive_rmp[d]) for d in deltas]
+    ae = [_sem(data.adaptive_rmp[d]) for d in deltas]
+    ax.errorbar(deltas, am, yerr=ae, fmt="-o", color="C0", capsize=3,
+                label="adaptive converged RMP")
+
+    ax.set_xlabel(r"$\Delta_{\mathrm{task}}$  (inter-task sector separation, deg)")
+    ax.set_ylabel("RMP")
+    ax.set_title("D-Fig 2 — adaptive RMP tracks the oracle RMP")
+    ax.legend(fontsize=8, loc="best")
+    ax.grid(True, alpha=0.3)
+    path = os.path.join(outdir, "dfig2_rmpstar_vs_delta.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def dfig3_paired_diff(data, outdir: str = "figures_diag") -> str:
+    """D-Fig 3 — paired (adaptive - single-fixed) HV vs delta_task, with CI (§8/§9)."""
+    from .diagnostic import paired_ci
+
+    os.makedirs(outdir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    deltas = data.deltas
+    means, lo_err, hi_err = [], [], []
+    for d in deltas:
+        diffs = np.asarray(data.adaptive_hv[d], float) - np.asarray(data.single_hv[d], float)
+        m, lo, hi = paired_ci(diffs)
+        means.append(m)
+        lo_err.append(m - lo)
+        hi_err.append(hi - m)
+
+    ax.errorbar(deltas, means, yerr=[lo_err, hi_err], fmt="-o", color="C0", capsize=4,
+                label=f"adaptive − fixed({data.single_fixed:g}), 95% paired CI")
+    ax.axhline(0.0, color="k", lw=1, ls="--")
+    ax.set_xlabel(r"$\Delta_{\mathrm{task}}$  (inter-task sector separation, deg)")
+    ax.set_ylabel("paired HV difference")
+    ax.set_title("D-Fig 3 — adaptive vs naïve fixed (paired)")
+    ax.legend(fontsize=8, loc="best")
+    ax.grid(True, alpha=0.3)
+    path = os.path.join(outdir, "dfig3_paired_diff.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def make_diagnostic_figures(data, outdir: str = "figures_diag") -> list[str]:
+    return [
+        dfig1_hv_vs_delta(data, outdir),
+        dfig2_rmpstar_vs_delta(data, outdir),
+        dfig3_paired_diff(data, outdir),
+    ]
 
 
 def make_all_figures(data: ExperimentData, outdir: str = "figures") -> list[str]:

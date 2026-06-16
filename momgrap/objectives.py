@@ -77,7 +77,7 @@ def _evaluate_chunk(genotypes: torch.Tensor, env: Environment, cfg: Config) -> t
     W = bd_precoding(Hh, cfg)                           # (N,S,M,K)
     R = evm_sinr_rate(Hh, W, cfg)                       # (N,S,K)
 
-    a_eff = effective_steering(P_ant, theta, cfg)       # (N,Q,M)
+    a_eff = effective_steering(P_ant, theta, cfg, env.sector_center_deg)   # (N,Q,M)
     B = beampattern(a_eff, W, cfg)                      # (N,S,Q)
 
     # layer 1 (fairness) then layer 2 (E over Omega)

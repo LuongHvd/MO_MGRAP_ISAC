@@ -27,11 +27,16 @@ from .channels import build_G_geo, ris_element_positions, steering, target_direc
 from .config import Config
 
 
-def effective_steering(P_ant: torch.Tensor, theta: torch.Tensor, cfg: Config) -> torch.Tensor:
-    """Effective transmit array response ``a_eff``, ``(N,Q,M)`` complex (deterministic)."""
+def effective_steering(P_ant: torch.Tensor, theta: torch.Tensor, cfg: Config,
+                       sector_center_deg: float | None = None) -> torch.Tensor:
+    """Effective transmit array response ``a_eff``, ``(N,Q,M)`` complex (deterministic).
+
+    ``sector_center_deg`` selects this task's target sector (the ``delta_task``
+    mechanism); defaults to the global sector centre.
+    """
     device = P_ant.device
     k0 = cfg.k0
-    tdir = target_directions(cfg).to(device=device, dtype=P_ant.dtype)        # (Q,3)
+    tdir = target_directions(cfg, sector_center_deg).to(device=device, dtype=P_ant.dtype)  # (Q,3)
     ris_pos = ris_element_positions(cfg).to(device=device, dtype=P_ant.dtype)  # (L,3)
     N, M = P_ant.shape[0], cfg.M
     Q, L = cfg.Q, cfg.L

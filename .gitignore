@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Experiment artifacts (regenerable)
+results/
+*.pkl
+figures_diag/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

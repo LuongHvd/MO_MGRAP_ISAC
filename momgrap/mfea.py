@@ -117,6 +117,10 @@ def run_mfea(cfg: Config, seed: int | None = None, tag: str = "") -> MFEAResult:
     device = cfg.device
     gen = torch.Generator(device=device)
     gen.manual_seed(int(seed))
+    # Separate RNG for per-generation MC snapshots so they depend only on
+    # (seed, generation), not on the evolution RNG (which RMP perturbs). This makes
+    # every method at a given seed see IDENTICAL environments -> paired HV (§8).
+    env_gen = torch.Generator(device=device)
     log = get_logger()
     t_start = time.perf_counter()
 
@@ -139,7 +143,11 @@ def run_mfea(cfg: Config, seed: int | None = None, tag: str = "") -> MFEAResult:
 
     for _g in range(cfg.max_gen):
         # 1. shared MC snapshots, one batch per regime
-        envs = draw_generation_environments(cfg, gen)
+        if cfg.paired_envs:
+            env_gen.manual_seed(int(seed) * 1_000_003 + _g)
+            envs = draw_generation_environments(cfg, env_gen)
+        else:
+            envs = draw_generation_environments(cfg, gen)
 
         # 2. offspring via multifactorial mating (transfer- and intra-xover-tagged)
         offspring, off_skill, off_transfer, off_intra = generate_offspring(pop, skill, rmp.rmp, cfg, gen)

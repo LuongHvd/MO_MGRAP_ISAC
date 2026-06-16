@@ -86,8 +86,21 @@ class Config:
 
     # Targets: Q directions, a cluster offset from the user centroid by delta_phi.
     #          delta_phi is a FIRST-CLASS knob (spec Sec 2.4) [NEW].
-    target_sep_deg: float = 20.0           # delta_phi: target-cluster offset
+    target_sep_deg: float = 20.0           # delta_phi: target-cluster offset (WITHIN-task)
     target_cluster_width_deg: float = 20.0  # angular spread of the Q targets
+
+    # ---- Diagnostic-protocol knobs (synergy<->conflict spectrum) ----
+    # delta_task: BETWEEN-task sector separation. Task t serves a sector centred at
+    # user_sector_center_deg + t*delta_task_deg. delta_task=0 -> all tasks share the
+    # sector (synergy anchor, reproduces the standard-fading behaviour); large
+    # delta_task -> sectors separate -> a single frozen RIS phase theta cannot serve
+    # all tasks -> conflict for the adaptive RMP to exploit. (Distinct from delta_phi,
+    # which is WITHIN-task and controls front width — held fixed across the sweep.)
+    delta_task_deg: float = 0.0
+    # RIS-reliance amplifier: extra attenuation (dB) on the direct BS->user path so
+    # communication leans more on the RIS reflected path -> amplifies theta-conflict.
+    # 0 = current model; only raised if the delta_task gate (protocol §7.1) needs it.
+    direct_atten_db: float = 0.0
 
     # ----- Power / noise / impairment (spec Sec 2.2, 7) -----
     p_max_dbm: float = 30.0           # total BS transmit power budget (dBm)
@@ -166,6 +179,10 @@ class Config:
     seed: int = 0
     device_str: str = "auto"          # {"auto", "cpu", "cuda"}
     dtype_real: torch.dtype = torch.float32
+    # Paired evaluation (protocol §8): draw per-generation MC snapshots from an RNG
+    # seeded by (seed, generation) only, independent of the evolution RNG, so every
+    # method at a given seed sees IDENTICAL environments -> HV is compared per-seed.
+    paired_envs: bool = True
     # Max individuals evaluated at once. Channel tensors scale as O(batch*S*L*M);
     # the genotype axis is chunked to this size so large evaluations (e.g. the
     # archive's unified-front build over thousands of configs) stay within GPU RAM.

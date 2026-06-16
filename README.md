@@ -171,6 +171,34 @@ thesis rather than to flatter it:
     survival by contribution to the robust min-over-regimes front instead of
     single-regime rank-1) is the natural future step but needs full-scale validation.
 
+### Diagnostic protocol — does adaptive RMP actually help?
+
+Because adaptive RMP showed no clear win over fixed on the standard fading regimes,
+a **pre-registered diagnostic** (run via `run_diagnostic.py`, implementing
+`Diagnostic_Protocol.md`) tests *whether there is any task conflict for adaptation
+to exploit* before judging the mechanism. Key pieces:
+
+* **`delta_task` knob** (`Config.delta_task_deg`): task `t` serves a sector centred
+  at `t·delta_task`. `0` = all tasks share the sector (synergy anchor, reproduces
+  the standard behaviour); large = sectors separate, so a single frozen RIS phase
+  `θ` cannot serve all tasks → durable conflict. (Distinct from `delta_phi`, the
+  within-task front-width knob, held fixed across the sweep.) Secondary amplifier:
+  `direct_atten_db` (RIS-reliance).
+* **Paired evaluation** (`Config.paired_envs`): per-generation MC snapshots are
+  seeded by `(seed, generation)` only — independent of the evolution RNG — so every
+  method at a seed sees identical environments and HV is compared *per-seed* with a
+  tight paired CI (fixes the overlapping-band problem in the plain HV-vs-gen plot).
+* **Oracle + decision tree** (`momgrap/diagnostic.py`): at each `delta_task` it finds
+  the best fixed RMP (`rmp*`), then applies the protocol §7 gate (does `rmp*` shift
+  with conflict, with a significant penalty?) and maps to **Outcome A** (adaptive
+  tracks oracle and beats naïve fixed → robustness-mechanism paper), **B** (matches
+  best single fixed without tuning), or **C** (no help → drop adaptive). The gate
+  watches the *oracle* (method-independent), so knob-turning cannot p-hack the
+  method into winning.
+* **D-Fig 1/2/3**: HV-vs-`delta_task` (adaptive/oracle/naïve), `rmp*`-vs-`delta_task`
+  with adaptive's converged RMP overlaid, and the paired `adaptive−fixed` difference
+  with CI. Run: `python run_diagnostic.py --quick` (plumbing) or full on GPU.
+
 ### Effect sizes, noise, and what to actually run
 
 Be realistic about magnitudes (these are stochastic EC results):

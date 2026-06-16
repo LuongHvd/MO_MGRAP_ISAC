@@ -68,14 +68,17 @@ def _unit_from_az_el(az: torch.Tensor, el: torch.Tensor) -> torch.Tensor:
     return torch.stack([cx, cy, cz], dim=-1)
 
 
-def target_directions(cfg: Config) -> torch.Tensor:
+def target_directions(cfg: Config, sector_center_deg: float | None = None) -> torch.Tensor:
     """The Q sensing-target unit directions, ``(Q, 3)``.
 
-    The cluster centre is offset from the user-sector centroid by ``delta_phi``
-    (spec Sec 2.4): this angular separation is the knob that controls Pareto
-    front width.
+    The cluster centre is offset from the (task's) user-sector centroid by
+    ``delta_phi`` (spec Sec 2.4): this angular separation is the knob that controls
+    Pareto front width.  ``sector_center_deg`` lets each task place its targets in
+    its own served sector (the ``delta_task`` mechanism); defaults to the global
+    sector centre.
     """
-    center = math.radians(cfg.user_sector_center_deg + cfg.target_sep_deg)
+    base = cfg.user_sector_center_deg if sector_center_deg is None else sector_center_deg
+    center = math.radians(base + cfg.target_sep_deg)
     if cfg.Q == 1:
         az = torch.tensor([center], dtype=torch.float64)
     else:
@@ -133,16 +136,23 @@ class Environment:
     g_los_dir: torch.Tensor         # (S, K, 3) unit RIS->user
     g_amp: torch.Tensor             # (S, K) sqrt path loss RIS->user
     g_nlos: torch.Tensor            # (S, K, L) complex iid
+    sector_center_deg: float = 0.0  # this task's served-sector centre (delta_task)
 
 
-def sample_environment(regime: RegimeSpec, S: int, generator: torch.Generator, cfg: Config) -> Environment:
-    """Draw the shared environment ``Omega`` for one regime and generation."""
+def sample_environment(regime: RegimeSpec, S: int, generator: torch.Generator, cfg: Config,
+                       sector_center_deg: float | None = None) -> Environment:
+    """Draw the shared environment ``Omega`` for one regime and generation.
+
+    ``sector_center_deg`` places this task's served sector (the ``delta_task``
+    mechanism); defaults to the global sector centre.
+    """
     device = cfg.device
     dtype_c = cfg.dtype_complex
     K, L, M, P = cfg.K, cfg.L, cfg.M, cfg.n_scatter_paths
+    center_deg = cfg.user_sector_center_deg if sector_center_deg is None else sector_center_deg
 
     # ----- user positions: uniform in sector, radius [r_min, r_max] -----
-    az_c = math.radians(cfg.user_sector_center_deg)
+    az_c = math.radians(center_deg)
     az_w = math.radians(cfg.user_sector_width_deg)
     az = az_c + (torch.rand(S, K, generator=generator, device=device) - 0.5) * az_w
     r = cfg.user_radius_min + torch.rand(S, K, generator=generator, device=device) * (
@@ -175,6 +185,7 @@ def sample_environment(regime: RegimeSpec, S: int, generator: torch.Generator, c
         user_pos=user_pos, user_dir=user_dir, user_amp=user_amp,
         scat_dir_bu=scat_dir_bu, scat_gain_bu=scat_gain_bu,
         G_nlos=G_nlos, g_los_dir=g_los_dir, g_amp=g_amp, g_nlos=g_nlos,
+        sector_center_deg=float(center_deg),
     )
 
 
@@ -193,10 +204,16 @@ def sample_environments(regimes: list[RegimeSpec], S: int, generator: torch.Gene
     early and decays, which is exactly what the adaptive RMP can exploit and a
     fixed RMP cannot.
     """
-    if not shared_geometry:
-        return [sample_environment(reg, S, generator, cfg) for reg in regimes]
+    # per-task served-sector centres (the delta_task mechanism)
+    centers = [cfg.user_sector_center_deg + t * cfg.delta_task_deg for t in range(len(regimes))]
 
-    base = sample_environment(regimes[0], S, generator, cfg)
+    # Geometry can only be shared when the tasks occupy the SAME sector
+    # (delta_task == 0); otherwise each task has its own users/targets -> conflict.
+    if not shared_geometry or cfg.delta_task_deg != 0.0:
+        return [sample_environment(reg, S, generator, cfg, sector_center_deg=centers[t])
+                for t, reg in enumerate(regimes)]
+
+    base = sample_environment(regimes[0], S, generator, cfg, sector_center_deg=centers[0])
     device, dtype_c = cfg.device, cfg.dtype_complex
     K, L, M, P = cfg.K, cfg.L, cfg.M, cfg.n_scatter_paths
     envs = []
@@ -234,7 +251,10 @@ def _direct_channel(P_ant: torch.Tensor, env: Environment, cfg: Config) -> torch
     alpha = env.scat_gain_bu[None, :, :, :, None]     # (1,S,K,P,1)
     a_nlos = (alpha * a_scat).sum(dim=3) / math.sqrt(cfg.n_scatter_paths)  # (N,S,K,M)
     amp = env.user_amp[None, :, :, None]              # (1,S,K,1)
-    d = amp * (w_los * a_los + w_nlos * a_nlos)
+    # RIS-reliance knob: extra attenuation of the direct BS->user path so
+    # communication leans more on the RIS reflected path (amplifies theta-conflict).
+    direct_scale = 10.0 ** (-cfg.direct_atten_db / 20.0)
+    d = direct_scale * amp * (w_los * a_los + w_nlos * a_nlos)
     return d
 
 
