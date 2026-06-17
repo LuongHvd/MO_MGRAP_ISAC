@@ -208,8 +208,10 @@ def dfig1_hv_vs_delta(data, outdir: str = "figures_diag") -> str:
     if od:
         om = [np.mean(data.oracle_hv[d]) for d in od]
         oe = [_sem(data.oracle_hv[d]) for d in od]
-        ax.errorbar(od, om, yerr=oe, fmt="-^", color="C2", capsize=3,
-                    label="best fixed per Δ (oracle)")
+        # markers only: the oracle is sampled at full_grid_deltas, so a connecting
+        # line would misleadingly interpolate through deltas with no oracle data.
+        ax.errorbar(od, om, yerr=oe, fmt="^", color="C2", capsize=3, linestyle="none",
+                    label="best fixed per Δ (oracle, sampled)")
 
     ax.set_xlabel(r"$\Delta_{\mathrm{task}}$  (inter-task sector separation, deg)")
     ax.set_ylabel("unified robust HV (mean ± SEM)")
@@ -231,7 +233,8 @@ def dfig2_rmpstar_vs_delta(data, outdir: str = "figures_diag") -> str:
     od = sorted(data.rmp_star)
     if od:
         rstar = [data.rmp_star[d] for d in od]
-        ax.plot(od, rstar, "-^", color="C2", ms=8, label="oracle best fixed RMP")
+        ax.plot(od, rstar, "^", color="C2", ms=10, linestyle="none",
+                label="oracle best fixed RMP (sampled; noisy argmax)")
 
     am = [np.mean(data.adaptive_rmp[d]) for d in deltas]
     ae = [_sem(data.adaptive_rmp[d]) for d in deltas]
