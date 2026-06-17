@@ -45,6 +45,9 @@ def parse_args(argv=None):
     p.add_argument("--full-grid", type=float, nargs="*", default=[0.0, 30.0, 60.0],
                    help="delta_task values where the full fixed grid runs")
     p.add_argument("--single-fixed", type=float, default=0.3, help="naïve fixed-RMP baseline")
+    p.add_argument("--direct-atten-db", type=float, default=None,
+                   help="RIS-reliance: extra dB attenuation on the direct BS->user path "
+                        "(amplifies theta-conflict; raise if the delta_task gate fails)")
     p.add_argument("--no-subdiag", action="store_true", help="skip rank1-vs-hv_contrib sub-diagnostic")
     p.add_argument("--outdir", default="figures_diag")
     p.add_argument("--save", default="results/diagnostic.pkl")
@@ -65,7 +68,8 @@ def main(argv=None) -> None:
     cfg = smoke_config() if args.quick else default_config()
     over = {}
     for k, v in (("max_gen", args.gens), ("pop_size", args.pop), ("mc_samples", args.mc),
-                 ("eval_batch_size", args.eval_batch), ("log_every", args.log_every)):
+                 ("eval_batch_size", args.eval_batch), ("log_every", args.log_every),
+                 ("direct_atten_db", args.direct_atten_db)):
         if v is not None:
             over[k] = v
     cfg = dataclasses.replace(cfg, **over)

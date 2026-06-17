@@ -204,8 +204,12 @@ def sample_environments(regimes: list[RegimeSpec], S: int, generator: torch.Gene
     early and decays, which is exactly what the adaptive RMP can exploit and a
     fixed RMP cannot.
     """
-    # per-task served-sector centres (the delta_task mechanism)
-    centers = [cfg.user_sector_center_deg + t * cfg.delta_task_deg for t in range(len(regimes))]
+    # per-task served-sector centres (the delta_task mechanism), placed SYMMETRICALLY
+    # about the base sector so larger delta_task stays in the front hemisphere
+    # (centre_t = base + (t - (T-1)/2)*delta_task), e.g. T=3 -> {-d, 0, +d}.
+    T = len(regimes)
+    centers = [cfg.user_sector_center_deg + (t - (T - 1) / 2.0) * cfg.delta_task_deg
+               for t in range(T)]
 
     # Geometry can only be shared when the tasks occupy the SAME sector
     # (delta_task == 0); otherwise each task has its own users/targets -> conflict.

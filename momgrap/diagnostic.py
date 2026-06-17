@@ -114,8 +114,12 @@ def run_diagnostic(
         grid_values = sorted(grid_values + [single_fixed])
 
     # ----- checkpoint cache (resume across breaks) -----
-    fingerprint = (f"N{cfg_base.pop_size}-G{cfg_base.max_gen}-S{cfg_base.mc_samples}"
-                   f"-D{cfg_base.D}-grid{grid_values}-paired{cfg_base.paired_envs}")
+    # _MODEL_VERSION is bumped whenever the channel/task model changes so stale
+    # caches from an older model are auto-invalidated (not silently reused).
+    _MODEL_VERSION = "m2-symmetric-sectors"
+    fingerprint = (f"{_MODEL_VERSION}-N{cfg_base.pop_size}-G{cfg_base.max_gen}"
+                   f"-S{cfg_base.mc_samples}-D{cfg_base.D}-grid{grid_values}"
+                   f"-paired{cfg_base.paired_envs}-atten{cfg_base.direct_atten_db:g}")
     cache: dict = {}
     if cache_path and os.path.exists(cache_path):
         try:
