@@ -12,8 +12,64 @@ phases) across two orthogonal axes:
 * **Multi-objective axis** = `(communication fairness, sensing fairness)` — a
   Pareto front lives *inside* each regime.
 
-The headline contribution is an **adaptive RMP driven by Pareto-survival of
-transfer offspring** (see `rmp.py`).
+> **Paper framing (read this first).** An adaptive Pareto-survival RMP was
+> implemented and **rigorously tested** (see *Diagnostic* below). On this model it
+> is **statistically indistinguishable from a fixed RMP** — the unified-front HV is
+> insensitive to the transfer rate. We therefore **do not** claim "adaptive beats
+> fixed". The defensible contribution is the **model + framework + the multitask‑vs‑
+> pooled result**; a single fixed RMP is used, justified by the diagnostic. This is
+> "framing C" (see `Diagnostic_Protocol.md`).
+
+---
+
+## Paper (framing C) — contributions, figures, claims
+
+### Contributions to state in the abstract
+1. **System model** — movable-antenna + RIS aided **ISAC** with a **RIS reflected
+   path in the sensing model** (`sensing.py`): the frozen RIS phase `θ` enters both
+   the communication and the sensing beampattern, making MA geometry + RIS phase the
+   joint design variables for a worst-user-rate / worst-target-illumination tradeoff.
+2. **Framework** — a GPU-tensorized **multi-objective multitask** evolutionary
+   pre-optimizer (per-regime NSGA-II + cross-regime knowledge transfer) that produces
+   a **unified robust front** (`min` over regimes): a one-time offline design from
+   which online operation just picks an operating point (zero re-optimization).
+3. **Findings** — (a) the multitask framework **beats pooled single-task** ("is it
+   just data augmentation?" → no); (b) optimized MA+RIS fronts **dominate** USPA and
+   random layouts; (c) front width is **controlled by the user–target angular
+   overlap `Δφ`** (the tradeoff is physical, not a modelling artifact); (d) a
+   conflict-sweep diagnostic shows the unified-front HV is **insensitive to the RMP**,
+   which justifies a single fixed RMP.
+
+### The three figures (regenerate with `make_paper_figures.py`)
+
+| Fig | File | Shows | Claim it supports |
+|---|---|---|---|
+| **1** | `fig1_unified_front.png` | proposed framework's unified robust front (`F_com` vs `F_sen`) vs USPA (★) / random (×); inset = front width vs `Δφ` | the deployable product dominates naïve references; the comm–sensing tradeoff is real and `Δφ`-controlled |
+| **2** | `fig2_hv_over_gen.png` | HV over generations: **multitask (proposed)** vs **pooled single-task**; inset = RMP-vs-generation | multitask ≫ pooled — multitask structure (not data augmentation) delivers the gain |
+| **3** | `fig3_hv_cdf.png` | CDF of the offline unified front's HV over stochastic realisations, with the online-reference HV band | robustness/predictability of the one-time offline design vs the per-realisation online upper bound |
+
+Regenerate (seconds, no re-optimization) from a saved run:
+```bash
+python make_paper_figures.py --pkl results/experiment.pkl --outdir figures_paper
+```
+If you need the data first (full run on GPU):
+```bash
+python run_experiments.py --seeds 20 --gens 300 --pop 200 --mc 32 \
+    --eval-batch 128 --n-real-online 25 --log-every 25 --log-file results/run.log
+```
+
+### Honest sentence to include (turns the negative RMP result into a strength)
+> *A diagnostic over an inter-task conflict sweep (`Δ_task`, plus a RIS-reliance
+> amplifier) shows the unified-front hypervolume is insensitive to the random-mating
+> probability — the paired `adaptive − fixed` HV difference includes zero at every
+> separation. We therefore adopt a single fixed RMP; the gain over pooled
+> single-task optimisation comes from the multitask population structure, not from
+> adapting the transfer rate.*
+
+### Do NOT claim
+- adaptive RMP beats fixed RMP (unsupported here);
+- any per-method ranking among adaptive / fixed / no-transfer on Fig 1 (within seed
+  noise) — Fig 1 shows **one** framework front vs references, by design.
 
 ---
 
@@ -179,10 +235,12 @@ a **pre-registered diagnostic** (run via `run_diagnostic.py`, implementing
 to exploit* before judging the mechanism. Key pieces:
 
 * **`delta_task` knob** (`Config.delta_task_deg`): task `t` serves a sector centred
-  at `t·delta_task`. `0` = all tasks share the sector (synergy anchor, reproduces
-  the standard behaviour); large = sectors separate, so a single frozen RIS phase
-  `θ` cannot serve all tasks → durable conflict. (Distinct from `delta_phi`, the
-  within-task front-width knob, held fixed across the sweep.) Secondary amplifier:
+  **symmetrically** about broadside at `base + (t − (T−1)/2)·delta_task`
+  (e.g. `T=3` → `{−d, 0, +d}`, so large separation stays in the front hemisphere).
+  `0` = all tasks share the sector (synergy anchor, reproduces the standard
+  behaviour); large = sectors separate, so a single frozen RIS phase `θ` cannot serve
+  all tasks → durable conflict. (Distinct from `delta_phi`, the within-task
+  front-width knob, held fixed across the sweep.) Secondary amplifier:
   `direct_atten_db` (RIS-reliance).
 * **Paired evaluation** (`Config.paired_envs`): per-generation MC snapshots are
   seeded by `(seed, generation)` only — independent of the evolution RNG — so every
@@ -198,6 +256,19 @@ to exploit* before judging the mechanism. Key pieces:
 * **D-Fig 1/2/3**: HV-vs-`delta_task` (adaptive/oracle/naïve), `rmp*`-vs-`delta_task`
   with adaptive's converged RMP overlaid, and the paired `adaptive−fixed` difference
   with CI. Run: `python run_diagnostic.py --quick` (plumbing) or full on GPU.
+* **Checkpoint/resume**: each completed run is written to `results/diagnostic_cache.pkl`
+  immediately; re-running the same command resumes (skips finished runs). A config
+  fingerprint auto-invalidates stale caches. Flags: `--cache / --no-cache / --fresh`.
+
+**Verdict on this model (20 seeds, full scale): GATE_FAIL on both levers.** Sweeping
+`delta_task` to ±60° and adding RIS-reliance (`--direct-atten-db 20`) never produced a
+significant conflict penalty (paired CI `[-0.19, 0.65]` etc., always includes 0); the
+oracle `rmp*` is a noisy argmax that flips between runs. The HV-vs-RMP landscape is
+flat → **adaptive RMP ties fixed** (no exploitable conflict). Per the protocol's
+integrity firewall (§11), escalation stops here and the honest conclusion is
+**Outcome C** → the framing-C paper above. This is a finding, not a failure: it
+justifies using a single fixed RMP and shows the multitask structure (not transfer-
+rate adaptation) is what beats pooling.
 
 ### Effect sizes, noise, and what to actually run
 
