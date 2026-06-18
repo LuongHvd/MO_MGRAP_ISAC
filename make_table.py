@@ -21,7 +21,7 @@ except Exception:
     pass
 
 from momgrap.experiments import load
-from momgrap.tables import save_table1, table1_latex
+from momgrap.tables import paired_summary_text, save_table1, table1_latex
 
 
 def main(argv=None) -> None:
@@ -30,13 +30,16 @@ def main(argv=None) -> None:
     p.add_argument("--out", default="results/table1.tex")
     p.add_argument("--no-igd", action="store_true", help="omit the optional IGD column")
     p.add_argument("--no-no-transfer", action="store_true", help="omit the optional no-transfer row")
+    p.add_argument("--no-significance", action="store_true", help="omit the paired-significance daggers")
     args = p.parse_args(argv)
 
     data = load(args.pkl)
-    tex = table1_latex(data, with_igd=not args.no_igd, include_no_transfer=not args.no_no_transfer)
+    kw = dict(with_igd=not args.no_igd, include_no_transfer=not args.no_no_transfer,
+              mark_significance=not args.no_significance)
+    tex = table1_latex(data, **kw)
     print(tex)
-    path = save_table1(data, args.out, with_igd=not args.no_igd,
-                       include_no_transfer=not args.no_no_transfer)
+    print("\n" + paired_summary_text(data))
+    path = save_table1(data, args.out, **kw)
     print(f"\nSaved -> {path}")
 
 
