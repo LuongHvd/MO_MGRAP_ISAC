@@ -22,9 +22,9 @@ from .channels import Environment, sample_environment
 from .config import Config
 from .mfea import MFEAResult, run_mfea
 from .metrics import RobustHVTracker, hv_reference, hypervolume_2d, non_dominated
-from .nsga import environmental_selection, fast_nondominated_sort
+from .nsga import crowding_distance, environmental_selection, fast_nondominated_sort
 from .objectives import draw_generation_environments, evaluate_single_regime, robust_evaluate
-from .operators import generate_offspring
+from .operators import gaussian_mutate, generate_offspring
 
 
 # --------------------------------------------------------------------------- #
@@ -58,12 +58,18 @@ class SinglePopResult:
 
 
 def single_pop_nsga(eval_fn, cfg: Config, gen: torch.Generator, n_gen: int, seed: int,
-                    hv_envs, tag: str = "single_pop", log_progress: bool = True) -> SinglePopResult:
+                    hv_envs, tag: str = "single_pop", log_progress: bool = True,
+                    variation=None) -> SinglePopResult:
     """One MO problem, single population, NSGA-II selection.  ``eval_fn(genos)->F (N,2)``.
 
     HV is tracked on ``hv_envs`` (robust = min over regimes) via the same
     cumulative-best :class:`RobustHVTracker` used by MO-MFEA, so every method's
     HV-over-generation curve is measured identically.
+
+    ``variation(pop, gen) -> offspring (N,D)`` overrides the offspring step (e.g. DE
+    variation for MO-DE); default ``None`` uses the standard SBX/arith + mutation.
+    Only the variation engine changes — selection/archive/HV are identical, so the
+    comparison is fair by construction.
     """
     import time
 
@@ -80,7 +86,10 @@ def single_pop_nsga(eval_fn, cfg: Config, gen: torch.Generator, n_gen: int, seed
     t0 = time.perf_counter()
 
     for _g in range(n_gen):
-        offspring, _, _, _ = generate_offspring(pop, skill, 0.0, cfg, gen)
+        if variation is None:
+            offspring, _, _, _ = generate_offspring(pop, skill, 0.0, cfg, gen)
+        else:
+            offspring = variation(pop, gen)
         genos_all = torch.cat([pop, offspring], dim=0)
         F_all = eval_fn(genos_all)
         sel = environmental_selection(F_all, N)
@@ -145,6 +154,138 @@ def run_pooled_single_task(cfg: Config, seed: int | None = None, tag: str = "poo
     hv_envs = draw_fixed_eval_environments(cfg, seed)
     return single_pop_nsga(lambda g: pooled_evaluate(g, cfg, gen), cfg, gen, cfg.max_gen, seed,
                            hv_envs=hv_envs, tag=tag)
+
+
+# --------------------------------------------------------------------------- #
+# MO-DE (GDE3-style) — single-task MO differential evolution                  #
+# --------------------------------------------------------------------------- #
+def _de_variation(pop: torch.Tensor, gen: torch.Generator, F: float = 0.5, CR: float = 0.9) -> torch.Tensor:
+    """DE/rand/1 with binomial crossover.  ``pop (N,D) in [0,1]`` -> trials ``(N,D)``.
+
+    Textbook defaults F=0.5, CR=0.9 (do not tune).
+    """
+    device = pop.device
+    N, D = pop.shape
+    # three mutually-distinct donors per target, all != the target index
+    scores = torch.rand(N, N, generator=gen, device=device)
+    scores[torch.arange(N, device=device), torch.arange(N, device=device)] = float("inf")
+    order = scores.argsort(dim=1)
+    r1, r2, r3 = order[:, 0], order[:, 1], order[:, 2]
+    mutant = (pop[r1] + F * (pop[r2] - pop[r3])).clamp(0.0, 1.0)          # DE/rand/1
+    cross = torch.rand(N, D, generator=gen, device=device) < CR
+    j_rand = torch.randint(0, D, (N,), generator=gen, device=device)
+    cross[torch.arange(N, device=device), j_rand] = True                 # force >=1 dim
+    return torch.where(cross, mutant, pop).clamp(0.0, 1.0)               # binomial xover
+
+
+def run_mo_de(cfg: Config, seed: int | None = None, tag: str = "mo_de") -> SinglePopResult:
+    """MO-DE (GDE3-style) single-task baseline: NSGA-II (mu+lambda) truncation over
+    pop u DE-trials.  Same problem/budget/eval-set/HV reference as the other methods;
+    only the variation engine (DE/rand/1/bin) differs."""
+    from .objectives import draw_fixed_eval_environments
+
+    seed = cfg.seed if seed is None else seed
+    gen = torch.Generator(device=cfg.device)
+    gen.manual_seed(int(seed) + 24601)
+    hv_envs = draw_fixed_eval_environments(cfg, seed)
+    return single_pop_nsga(lambda g: pooled_evaluate(g, cfg, gen), cfg, gen, cfg.max_gen, seed,
+                           hv_envs=hv_envs, tag=tag,
+                           variation=lambda pop, g: _de_variation(pop, g))
+
+
+# --------------------------------------------------------------------------- #
+# MOPSO (Coello-style) — swarm + external crowding archive                    #
+# --------------------------------------------------------------------------- #
+def _pareto_dominates(F1: torch.Tensor, F2: torch.Tensor) -> torch.Tensor:
+    """Row-wise maximisation dominance: does ``F1`` dominate ``F2``?  ``(N,m)`` -> ``(N,)``."""
+    return (F1 >= F2).all(dim=-1) & (F1 > F2).any(dim=-1)
+
+
+def _archive_nondominated(genos: torch.Tensor, objs: torch.Tensor, cap: int,
+                          ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Non-dominated set of (genos, objs); if larger than ``cap``, prune most-crowded."""
+    rank = fast_nondominated_sort(objs)
+    keep = rank == 0
+    g, f = genos[keep], objs[keep]
+    if g.shape[0] > cap:
+        cd = crowding_distance(f, torch.zeros(f.shape[0], dtype=torch.long, device=f.device))
+        order = torch.argsort(cd, descending=True)[:cap]
+        g, f = g[order], f[order]
+    return g, f
+
+
+def run_mopso(cfg: Config, seed: int | None = None, tag: str = "mopso") -> SinglePopResult:
+    """MOPSO (Coello-style) single-task baseline: fixed swarm + external archive with
+    crowding-based leader selection.  HV measured identically (same RobustHVTracker,
+    hv_envs, hv_reference) on the archive front each generation.  Defaults: w 0.9->0.4,
+    c1=c2=1.49, v_max=0.2, archive cap=N, p_mut=0.1 (do not tune)."""
+    import time
+
+    from .logging_utils import get_logger
+    from .objectives import draw_fixed_eval_environments
+
+    seed = cfg.seed if seed is None else seed
+    device = cfg.device
+    N, D, n_gen = cfg.pop_size, cfg.D, cfg.max_gen
+    gen = torch.Generator(device=device)
+    gen.manual_seed(int(seed) + 1729)
+    hv_envs = draw_fixed_eval_environments(cfg, seed)
+    ref = hv_reference(cfg).to(device)
+
+    def eval_fn(g):
+        return pooled_evaluate(g, cfg, gen)
+
+    w0, w1, c1, c2, vmax, p_mut, cap = 0.9, 0.4, 1.49, 1.49, 0.2, 0.1, N
+    X = torch.rand(N, D, generator=gen, device=device, dtype=cfg.dtype_real)
+    V = torch.zeros_like(X)
+    Fx = eval_fn(X)
+    Xp, Fp = X.clone(), Fx.clone()
+    A_g, A_f = _archive_nondominated(X, Fx, cap)
+
+    archive = Archive(cfg)
+    tracker = RobustHVTracker(cfg, hv_envs, ref)
+    log = get_logger()
+    t0 = time.perf_counter()
+
+    for _g in range(n_gen):
+        w = w0 + (w1 - w0) * (_g / max(1, n_gen - 1))          # linear inertia 0.9 -> 0.4
+        nA = A_g.shape[0]
+        if nA > 0:                                             # crowding-tournament leaders
+            cd = crowding_distance(A_f, torch.zeros(nA, dtype=torch.long, device=device))
+            a = torch.randint(0, nA, (N,), generator=gen, device=device)
+            b = torch.randint(0, nA, (N,), generator=gen, device=device)
+            leaders = A_g[torch.where(cd[a] >= cd[b], a, b)]
+        else:
+            leaders = Xp
+        r1 = torch.rand(N, D, generator=gen, device=device)
+        r2 = torch.rand(N, D, generator=gen, device=device)
+        V = w * V + c1 * r1 * (Xp - X) + c2 * r2 * (leaders - X)
+        V = V.clamp(-vmax, vmax)
+        Xnew = X + V
+        hit = (Xnew < 0.0) | (Xnew > 1.0)
+        V = torch.where(hit, torch.zeros_like(V), V)           # zero velocity at bounds
+        X = Xnew.clamp(0.0, 1.0)
+        mut = torch.rand(N, generator=gen, device=device) < p_mut   # turbulence
+        if bool(mut.any()):
+            X[mut] = gaussian_mutate(X[mut], cfg.mutation_sigma, gen).clamp(0.0, 1.0)
+        Fx = eval_fn(X)
+        new_dom = _pareto_dominates(Fx, Fp)                    # personal-best update
+        mutual = (~new_dom) & (~_pareto_dominates(Fp, Fx))
+        tie = torch.rand(N, generator=gen, device=device) < 0.5
+        upd = (new_dom | (mutual & tie)).unsqueeze(-1)
+        Xp = torch.where(upd, X, Xp)
+        Fp = torch.where(upd, Fx, Fp)
+        A_g, A_f = _archive_nondominated(torch.cat([A_g, X]), torch.cat([A_f, Fx]), cap)
+        archive.update(A_g, torch.zeros(A_g.shape[0], dtype=torch.long, device=device))
+        tracker.update(A_g)
+        if cfg.log_every and ((_g + 1) % cfg.log_every == 0 or _g == n_gen - 1):
+            elapsed = time.perf_counter() - t0
+            rate = (_g + 1) / max(1e-9, elapsed)
+            eta = (n_gen - (_g + 1)) / max(1e-9, rate)
+            log.info(f"{tag} gen {_g + 1:>4d}/{n_gen}  HV={tracker.history[-1]:.4g}  "
+                     f"|A|={A_g.shape[0]}  ({rate:.2f} gen/s, ETA {eta:5.0f}s)")
+
+    return SinglePopResult(cfg=cfg, seed=seed, hv_history=tracker.history, final_pop=X, archive=archive)
 
 
 # --------------------------------------------------------------------------- #

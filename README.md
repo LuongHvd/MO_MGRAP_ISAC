@@ -45,12 +45,21 @@ phases) across two orthogonal axes:
 | Fig | File | Shows | Claim it supports |
 |---|---|---|---|
 | **1** | `fig1_unified_front.png` | proposed framework's unified robust front (`F_com` vs `F_sen`) vs USPA (★) / random (×); inset = front width vs `Δφ` | the deployable product dominates naïve references; the comm–sensing tradeoff is real and `Δφ`-controlled |
-| **2** | `fig2_hv_over_gen.png` | HV over generations: **multitask (proposed)** vs **pooled single-task**; inset = RMP-vs-generation | multitask ≫ pooled — multitask structure (not data augmentation) delivers the gain |
+| **2** | `fig2_hv_over_gen.png` | robust HV over generations: **MO-MGRAP (proposed)** vs single-task **pooled / MO-DE / MOPSO** | proposed (multitask) leads; pooled (same operators) isolates the multitask effect, MO-DE/MOPSO add the search-engine comparison |
 | **3** | `fig3_hv_cdf.png` | CDF of the offline unified front's HV over stochastic realisations, with the online-reference HV band | robustness/predictability of the one-time offline design vs the per-realisation online upper bound |
+
+**Table I** (method comparison on the robust front) — `make_table.py` emits a
+ready-to-paste LaTeX table: robust HV (mean ± std), `F_com`/`F_sen` knee, optional
+normalized IGD; rows = MO-MGRAP (proposed) · Pooled · MO-DE · MOPSO · No-transfer.
+The two extra **single-task metaheuristic baselines** are **MO-DE** (GDE3-style
+DE/rand/1/bin) and **MOPSO** (Coello-style PSO with crowding-based leaders + external
+archive), run on the *same* problem/budget/eval-set/HV-reference as everything else
+(`baselines.py::run_mo_de`, `run_mopso`).
 
 Regenerate (seconds, no re-optimization) from a saved run:
 ```bash
 python make_paper_figures.py --pkl results/experiment.pkl --outdir figures_paper
+python make_table.py        --pkl results/experiment.pkl --out results/table1.tex
 ```
 If you need the data first (full run on GPU):
 ```bash

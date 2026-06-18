@@ -113,6 +113,12 @@ def main(argv=None) -> None:
     figs = make_all_figures(data, args.outdir)
     log.info("Figures: " + ", ".join(figs))
 
+    # Table I (LaTeX) — method comparison on the robust front
+    from momgrap.tables import save_table1, table1_latex
+    log.info("Table I (LaTeX):\n" + table1_latex(data))
+    tpath = save_table1(data, "results/table1.tex")
+    log.info(f"Saved Table I -> {tpath}")
+
 
 if __name__ == "__main__":
     main()

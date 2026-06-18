@@ -21,16 +21,20 @@ import numpy as np  # noqa: E402
 from .experiments import ExperimentData  # noqa: E402
 
 _LABELS = {
-    "adaptive": "MO-MGRAP (adaptive)",
+    "adaptive": "MO-MGRAP (proposed)",
     "fixed_rmp": "fixed-RMP",
     "no_transfer": "no-transfer (indep. NSGA-II)",
     "pooled": "pooled single-task",
+    "mo_de": "MO-DE",
+    "mopso": "MOPSO",
 }
 _COLORS = {
     "adaptive": "C0",
     "fixed_rmp": "C1",
     "no_transfer": "C2",
     "pooled": "C3",
+    "mo_de": "C4",
+    "mopso": "C5",
 }
 
 
@@ -91,10 +95,12 @@ def fig2_hv_over_gen(data: ExperimentData, outdir: str = "figures") -> str:
     os.makedirs(outdir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 4.2))
 
-    # Focus: multitask transfer (adaptive) vs pooled single-task augmentation.
-    # The fixed-RMP / no-transfer ablation is within seed variance (reported in
-    # text), so it is not overlaid here.
-    for m in ("adaptive", "pooled"):
+    # Four robust-HV-over-generation curves: proposed (multitask) vs the single-task
+    # baselines. The gap to MO-DE/MOPSO reflects multitask structure + search engine;
+    # the pooled (same-operator) baseline isolates the multitask effect. All curves
+    # share population, generations, MC budget, eval set, and HV reference.
+    # (No RMP-vs-gen inset: the paper adopts a fixed transfer rate — Framing C.)
+    for m in ("adaptive", "pooled", "mo_de", "mopso"):
         hv = data.hv_gen.get(m)
         if hv is None or hv.size == 0:
             continue
@@ -105,23 +111,10 @@ def fig2_hv_over_gen(data: ExperimentData, outdir: str = "figures") -> str:
         ax.fill_between(gens, mean - std, mean + std, color=_COLORS[m], alpha=0.15)
 
     ax.set_xlabel("generation")
-    ax.set_ylabel("hypervolume (mean ± std)")
+    ax.set_ylabel("robust hypervolume (mean ± std)")
     ax.set_title("Fig 2 — HV over generations")
-    ax.legend(fontsize=8, loc="upper left")
+    ax.legend(fontsize=8, loc="lower right")
     ax.grid(True, alpha=0.3)
-
-    # inset: RMP vs generation (mean ± std) -- lower-right, clear of the legend
-    if data.rmp_gen.size:
-        axin = fig.add_axes([0.60, 0.16, 0.30, 0.28])
-        rmp_mean = data.rmp_gen.mean(axis=0)
-        rmp_std = data.rmp_gen.std(axis=0)
-        gens = np.arange(1, rmp_mean.shape[0] + 1)
-        axin.plot(gens, rmp_mean, color="C0")
-        axin.fill_between(gens, rmp_mean - rmp_std, rmp_mean + rmp_std, color="C0", alpha=0.2)
-        axin.set_xlabel("gen", fontsize=7)
-        axin.set_ylabel("RMP", fontsize=7)
-        axin.tick_params(labelsize=6)
-        axin.set_title("RMP vs gen", fontsize=7)
 
     path = os.path.join(outdir, "fig2_hv_over_gen.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")

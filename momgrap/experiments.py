@@ -78,23 +78,28 @@ def run_all(
     from .logging_utils import ensure_logging
 
     log = ensure_logging()
-    n_methods = 3 + 1  # adaptive, fixed_rmp, no_transfer + pooled
-    log.info(f"run_all: {len(seeds)} seeds x {n_methods} methods "
-             f"(N={cfg.pop_size} G={cfg.max_gen} S={cfg.mc_samples} T={cfg.T}) "
-             f"device={cfg.device}")
-
+    # MFEA methods (multitask) and single-task baselines (one MO problem each)
     methods = {
         "adaptive": B.run_adaptive,
         "fixed_rmp": B.run_fixed_rmp,
         "no_transfer": B.run_no_transfer,
     }
-    hv_gen = {m: [] for m in list(methods) + ["pooled"]}
+    single_task = {
+        "pooled": B.run_pooled_single_task,
+        "mo_de": B.run_mo_de,
+        "mopso": B.run_mopso,
+    }
+    log.info(f"run_all: {len(seeds)} seeds x {len(methods) + len(single_task)} methods "
+             f"(N={cfg.pop_size} G={cfg.max_gen} S={cfg.mc_samples} T={cfg.T}) "
+             f"device={cfg.device}")
+
+    hv_gen = {m: [] for m in list(methods) + list(single_task)}
     rmp_gen, rho_gen = [], []
     # Only seed[0]'s full results are needed for the fronts (Fig 1/3); other seeds
     # contribute only HV/RMP histories, so we do not retain their (GPU-resident)
     # archives -- this keeps GPU memory flat across many seeds.
     seed0_results: dict = {}
-    seed0_pooled = None
+    seed0_single: dict = {}
     s0 = seeds[0]
 
     for si, sd in enumerate(seeds):
@@ -107,10 +112,11 @@ def run_all(
                 rho_gen.append(res.rho_history)
             if sd == s0:
                 seed0_results[m] = res
-        pooled = B.run_pooled_single_task(cfg, sd, tag=f"[pooled s{sd}]")
-        hv_gen["pooled"].append(pooled.hv_history)
-        if sd == s0:
-            seed0_pooled = pooled
+        for m, fn in single_task.items():
+            res = fn(cfg, sd, tag=f"[{m} s{sd}]")
+            hv_gen[m].append(res.hv_history)
+            if sd == s0:
+                seed0_single[m] = res
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -118,11 +124,9 @@ def run_all(
 
     # ----- Fig 1: unified robust fronts (seed[0]) + reference markers -----
     log.info("building unified robust fronts (seed 0) ...")
-    unified = {
-        m: _unified_front_np(seed0_results[m], cfg, s0, s_eval) for m in methods
-    }
-    # pooled also yields a (single-task) archive; build its robust front for context
-    unified["pooled"] = _unified_front_np(seed0_pooled, cfg, s0, s_eval)
+    unified = {m: _unified_front_np(seed0_results[m], cfg, s0, s_eval) for m in methods}
+    for m, res in seed0_single.items():
+        unified[m] = _unified_front_np(res, cfg, s0, s_eval)
     ref = B.reference_layouts(cfg, s0)
     reference = {"uspa": _front_to_np(ref["uspa"]), "random": _front_to_np(ref["random"])}
 

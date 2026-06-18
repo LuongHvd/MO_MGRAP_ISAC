@@ -1,0 +1,124 @@
+"""Table I — method comparison on the robust (min-over-regimes) front.
+[baselines-table spec §6]
+
+All rows are scored identically: robust HV (mean ± std over seeds, from the same
+RobustHVTracker), knee-point physical values from the seed-0 robust front, and an
+optional normalized IGD against a reference front built from the union of all
+methods' robust fronts. Emits a ready-to-paste IEEE-friendly LaTeX table.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import torch
+
+from .metrics import non_dominated
+
+# (data key, display label) in row order
+_ROWS = [
+    ("adaptive", "MO-MGRAP (proposed)"),
+    ("pooled", "Pooled single-task"),
+    ("mo_de", "MO-DE"),
+    ("mopso", "MOPSO"),
+    ("no_transfer", "No-transfer"),
+]
+
+
+def _final_hv_stats(data) -> dict:
+    """mean/std of final robust HV per method (over seeds)."""
+    out = {}
+    for key, _ in _ROWS:
+        arr = data.hv_gen.get(key)
+        if arr is not None and getattr(arr, "size", 0):
+            col = np.asarray(arr)[:, -1]
+            out[key] = (float(col.mean()), float(col.std()))
+    return out
+
+
+def compute_igd(data, keys) -> dict:
+    """Normalized IGD per method vs a reference front = non-dominated union of fronts."""
+    fronts = {k: data.unified_fronts[k] for k in keys
+              if data.unified_fronts.get(k) is not None and data.unified_fronts[k].shape[0] > 0}
+    if len(fronts) < 1:
+        return {}
+    allpts = np.concatenate(list(fronts.values()), axis=0)
+    R = non_dominated(torch.tensor(allpts)).cpu().numpy()
+    mn = R.min(axis=0)
+    rng = R.max(axis=0) - mn
+    rng[rng < 1e-12] = 1.0
+    Rn = (R - mn) / rng
+    out = {}
+    for k, F in fronts.items():
+        Fn = (F - mn) / rng
+        d = np.sqrt(((Rn[:, None, :] - Fn[None, :, :]) ** 2).sum(-1))  # (|R|,|F|)
+        out[k] = float(d.min(axis=1).mean())
+    return out
+
+
+def table1_latex(data, with_igd: bool = True, include_no_transfer: bool = True) -> str:
+    """Return a ready-to-paste LaTeX ``table`` (best HV bold, best IGD bold)."""
+    rows = [(k, lbl) for k, lbl in _ROWS if k in data.hv_gen
+            and (include_no_transfer or k != "no_transfer")]
+    hv = _final_hv_stats(data)
+    keys = [k for k, _ in rows]
+    igd = compute_igd(data, keys) if with_igd else {}
+
+    best_hv = max((m for m, _ in hv.values()), default=None)
+    best_igd = min(igd.values()) if igd else None
+    n_seeds = len(getattr(data, "seeds", []) or [])
+
+    ncol = 3 + (1 if igd else 0)
+    colspec = "l" + "c" * ncol
+    header = ["Method", "Robust HV", r"$F_{\mathrm{com}}$ knee (bps/Hz)", r"$F_{\mathrm{sen}}$ knee (dB)"]
+    if igd:
+        header.append("IGD")
+
+    lines = [
+        r"\begin{table}[t]",
+        r"\centering",
+        r"\caption{Comparison on the unified robust (worst-regime) front. All methods "
+        r"share population, generations, Monte~Carlo budget, evaluation set, and HV "
+        f"reference; HV is mean~$\\pm$~std over {n_seeds} seeds. MO-MGRAP is multitask; "
+        r"Pooled, MO-DE, MOPSO are single-task (MO-DE: GDE3-style; MOPSO: Coello-style "
+        r"with crowding-based leaders). Best HV/IGD in bold.}",
+        r"\label{tab:methods}",
+        rf"\begin{{tabular}}{{{colspec}}}",
+        r"\hline",
+        " & ".join(header) + r" \\",
+        r"\hline",
+    ]
+
+    for key, lbl in rows:
+        cells = [lbl]
+        if key in hv:
+            m, s = hv[key]
+            cell = f"{m:.1f} $\\pm$ {s:.1f}"
+            cells.append(rf"\textbf{{{cell}}}" if (best_hv is not None and abs(m - best_hv) < 1e-9) else cell)
+        else:
+            cells.append("--")
+        kv = getattr(data, "knee", {}).get(key)
+        if kv is not None:
+            cells.append(f"{kv[0]:.2f}")
+            cells.append(f"{kv[1]:.2f}")
+        else:
+            cells += ["--", "--"]
+        if igd:
+            if key in igd:
+                v = igd[key]
+                cells.append(rf"\textbf{{{v:.3f}}}" if (best_igd is not None and abs(v - best_igd) < 1e-9) else f"{v:.3f}")
+            else:
+                cells.append("--")
+        lines.append(" & ".join(cells) + r" \\")
+
+    lines += [r"\hline", r"\end{tabular}", r"\end{table}", ""]
+    return "\n".join(lines)
+
+
+def save_table1(data, path: str = "results/table1.tex", **kw) -> str:
+    import os
+
+    tex = table1_latex(data, **kw)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(tex)
+    return path
