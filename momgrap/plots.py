@@ -21,7 +21,7 @@ import numpy as np  # noqa: E402
 from .experiments import ExperimentData  # noqa: E402
 
 _LABELS = {
-    "adaptive": "MO-MGRAP (proposed)",
+    "adaptive": "RAMP (proposed)",
     "fixed_rmp": "fixed-RMP",
     "no_transfer": "no-transfer (indep. NSGA-II)",
     "pooled": "pooled single-task",
@@ -58,7 +58,7 @@ def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
         allpts = np.concatenate(parts, axis=0)
         env = non_dominated(torch.tensor(allpts)).cpu().numpy()
         env = env[np.argsort(env[:, 0])]
-        ax.plot(env[:, 0], env[:, 1], "-o", ms=3, color="C0", label="MO-MGRAP (proposed)")
+        ax.plot(env[:, 0], env[:, 1], "-o", ms=3, color="C0", label="RAMP (proposed)")
 
     uspa = data.reference["uspa"]
     rnd = data.reference["random"]
@@ -163,7 +163,7 @@ def fig4_rmp_sweep(data: ExperimentData, outdir: str = "figures") -> str | None:
 
     # adaptive result (mean over seeds), drawn as a horizontal line
     adaptive_hv = float(data.hv_gen["adaptive"].mean(axis=0)[-1])
-    ax.axhline(adaptive_hv, color="C0", ls="--", lw=2, label="MO-MGRAP (adaptive)")
+    ax.axhline(adaptive_hv, color="C0", ls="--", lw=2, label="RAMP (adaptive)")
 
     ax.set_xlabel("fixed RMP value")
     ax.set_ylabel("final hypervolume (mean over seeds)")
@@ -190,7 +190,7 @@ def dfig1_hv_vs_delta(data, outdir: str = "figures_diag") -> str:
 
     am = [np.mean(data.adaptive_hv[d]) for d in deltas]
     ae = [_sem(data.adaptive_hv[d]) for d in deltas]
-    ax.errorbar(deltas, am, yerr=ae, fmt="-o", color="C0", capsize=3, label="MO-MGRAP (adaptive)")
+    ax.errorbar(deltas, am, yerr=ae, fmt="-o", color="C0", capsize=3, label="RAMP (adaptive)")
 
     sm = [np.mean(data.single_hv[d]) for d in deltas]
     se = [_sem(data.single_hv[d]) for d in deltas]

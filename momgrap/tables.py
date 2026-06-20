@@ -77,7 +77,7 @@ def paired_summary_text(data, proposed: str = "adaptive") -> str:
 
 # (data key, display label) in row order
 _ROWS = [
-    ("adaptive", "MO-MGRAP (proposed)"),
+    ("adaptive", "RAMP (proposed)"),
     ("pooled", "Pooled single-task"),
     ("mo_de", "MO-DE"),
     ("mopso", "MOPSO"),
@@ -146,7 +146,7 @@ def table1_latex(data, with_igd: bool = True, include_no_transfer: bool = True,
         r"\centering",
         r"\caption{Comparison on the unified robust (worst-regime) front. All methods "
         r"share population, generations, Monte~Carlo budget, evaluation set, and HV "
-        f"reference; HV is mean~$\\pm$~std over {n_seeds} seeds. MO-MGRAP is multitask; "
+        f"reference; HV is mean~$\\pm$~std over {n_seeds} seeds. RAMP is multitask; "
         r"Pooled, MO-DE, MOPSO are single-task (MO-DE: GDE3-style; MOPSO: Coello-style "
         r"with crowding-based leaders). Best HV/IGD in bold."
         + (r" $^{\dagger}$: proposed significantly better (per-seed paired 95\% CI)." if any_dagger else "")
