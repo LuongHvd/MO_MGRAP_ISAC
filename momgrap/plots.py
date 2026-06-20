@@ -69,7 +69,8 @@ def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
 
     ax.set_xlabel(r"$F_{\mathrm{com}}$  (worst-user rate, bps/Hz)")
     ax.set_ylabel(r"$F_{\mathrm{sen}}$  (worst-target beampattern, dB)")
-    ax.set_title("Fig 1 — Unified robust front")
+    # No in-figure title (IEEE convention): the LaTeX \caption{} provides the number
+    # and description, so a baked-in "Fig N" would clash with the document numbering.
     ax.legend(fontsize=8, loc="best")
     ax.grid(True, alpha=0.3)
 
@@ -112,7 +113,7 @@ def fig2_hv_over_gen(data: ExperimentData, outdir: str = "figures") -> str:
 
     ax.set_xlabel("generation")
     ax.set_ylabel("robust hypervolume (mean ± std)")
-    ax.set_title("Fig 2 — HV over generations")
+    # No in-figure title (IEEE convention) — see fig1.
     ax.legend(fontsize=8, loc="lower right")
     ax.grid(True, alpha=0.3)
 
@@ -140,7 +141,7 @@ def fig3_hv_cdf(data: ExperimentData, outdir: str = "figures") -> str:
 
     ax.set_xlabel("hypervolume per realisation")
     ax.set_ylabel("CDF")
-    ax.set_title("Fig 3 — HV-CDF over realisations")
+    # No in-figure title (IEEE convention) — see fig1.
     ax.legend(fontsize=8, loc="best")
     ax.grid(True, alpha=0.3)
 
