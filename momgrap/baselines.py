@@ -329,12 +329,15 @@ def offline_hv_over_realisations(
     return out
 
 
-def online_reference_hv(cfg: Config, seed: int, n_real: int = 20, n_gen: int | None = None) -> torch.Tensor:
+def online_reference_hv(cfg: Config, seed: int, n_real: int = 20, n_gen: int | None = None,
+                        collect_fronts: bool = False):
     """Per-realisation online optimisation HV (upper bound).  Expensive -> few realisations.
 
     For each realisation a single environment per regime is fixed and a short
     single-population NSGA-II optimises the worst-regime objective for *that*
-    realisation; its final-front HV is recorded.
+    realisation; its final-front HV is recorded.  With ``collect_fronts`` it also
+    returns the non-dominated UNION of the per-realisation optimised fronts (the
+    real-time reachable envelope, for Fig 1) -> returns ``(hv, front_points)``.
     """
     from .logging_utils import get_logger
 
@@ -342,6 +345,7 @@ def online_reference_hv(cfg: Config, seed: int, n_real: int = 20, n_gen: int | N
     ref = hv_reference(cfg).to(cfg.device)
     log = get_logger()
     out = torch.empty(n_real, dtype=torch.float64)
+    front_acc = []
     for r in range(n_real):
         gen = torch.Generator(device=cfg.device)
         gen.manual_seed(int(seed) + 90000 + r)
@@ -349,6 +353,31 @@ def online_reference_hv(cfg: Config, seed: int, n_real: int = 20, n_gen: int | N
         res = single_pop_nsga(lambda g: robust_evaluate(g, envs, cfg), cfg, gen, n_gen,
                               seed + r, hv_envs=envs, log_progress=False)
         out[r] = res.hv_history[-1]
+        if collect_fronts:
+            pts = robust_evaluate(res.final_pop, envs, cfg)
+            front_acc.append(non_dominated(pts))
         if cfg.log_every:
             log.info(f"  online-ref realisation {r + 1}/{n_real}  HV={float(out[r]):.4g}")
+    if collect_fronts:
+        fronts = non_dominated(torch.cat(front_acc)) if front_acc else torch.empty(0, 2, device=cfg.device)
+        return out, fronts
     return out
+
+
+def random_genotype(cfg: Config, seed: int = 0) -> torch.Tensor:
+    """One fixed random layout (deployed-as-is baseline)."""
+    gen = torch.Generator(device=cfg.device)
+    gen.manual_seed(int(seed) + 4321)
+    return torch.rand(1, cfg.D, generator=gen, device=cfg.device, dtype=cfg.dtype_real)
+
+
+def ref_layout_hv_over_realisations(cfg: Config, seed: int, n_real: int = 200) -> dict:
+    """HV-over-realisations CDFs for the fixed USPA and random layouts (Fig 3).
+
+    Uses the SAME realisations (seed+555) as ``offline_hv_over_realisations`` so the
+    curves are directly comparable.
+    """
+    return {
+        "uspa_hv": offline_hv_over_realisations(uspa_genotype(cfg), cfg, seed, n_real).cpu().numpy(),
+        "random_hv": offline_hv_over_realisations(random_genotype(cfg, seed), cfg, seed, n_real).cpu().numpy(),
+    }

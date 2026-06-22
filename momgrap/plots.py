@@ -67,6 +67,13 @@ def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
     if rnd.shape[0]:
         ax.scatter(rnd[:, 0], rnd[:, 1], marker="x", s=22, color="gray", alpha=0.6, label="random")
 
+    # real-time reachable envelope (union of per-realisation online-optimised fronts):
+    # an optimistic upper bound the offline robust design is measured against.
+    rt = data.reference.get("realtime_front")
+    if rt is not None and getattr(rt, "shape", (0,))[0] > 0:
+        rt = rt[np.argsort(rt[:, 0])]
+        ax.plot(rt[:, 0], rt[:, 1], "--", color="C1", lw=1.6, label="real-time (per-realisation env.)")
+
     ax.set_xlabel(r"$F_{\mathrm{com}}$  (worst-user rate, bps/Hz)")
     ax.set_ylabel(r"$F_{\mathrm{sen}}$  (worst-target beampattern, dB)")
     # No in-figure title (IEEE convention): the LaTeX \caption{} provides the number
@@ -142,6 +149,14 @@ def fig3_hv_cdf(data: ExperimentData, outdir: str = "figures") -> str:
                 label="real-time (per-realisation, upper bound)")
         lo, hi = np.percentile(online, [10, 90])
         ax.axvspan(lo, hi, color="C1", alpha=0.10)
+
+    # fixed reference layouts as their own HV-over-realisation CDFs
+    for key, lbl, color in (("uspa_hv", "Fixed USPA", "k"),
+                            ("random_hv", "random layout", "gray")):
+        arr = np.asarray(data.fig3.get(key, []))
+        if arr.size:
+            a = np.sort(arr)
+            ax.plot(a, np.arange(1, a.size + 1) / a.size, color=color, lw=1.4, ls="--", label=lbl)
 
     ax.set_xlabel("hypervolume per realisation")
     ax.set_ylabel("CDF")

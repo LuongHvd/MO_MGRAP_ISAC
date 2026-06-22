@@ -146,10 +146,19 @@ def run_all(
     adaptive0 = seed0_results["adaptive"]
     _, adaptive_front_genos = adaptive0.archive.unified_robust_front(_eval_generator(cfg, s0), s_eval)
     offline_hv = B.offline_hv_over_realisations(adaptive_front_genos, cfg, s0, n_real_offline)
-    online_hv = (
-        B.online_reference_hv(cfg, s0, n_real_online) if do_online else torch.empty(0)
-    )
-    fig3 = {"offline_hv": offline_hv.cpu().numpy(), "online_hv": online_hv.cpu().numpy()}
+    # USPA + random fixed-layout HV-over-realisations (same realisations as offline)
+    ref_hv = B.ref_layout_hv_over_realisations(cfg, s0, n_real_offline)
+    if do_online:
+        online_hv, realtime_front = B.online_reference_hv(cfg, s0, n_real_online, collect_fronts=True)
+        reference["realtime_front"] = _front_to_np(realtime_front)
+    else:
+        online_hv = torch.empty(0)
+    fig3 = {
+        "offline_hv": offline_hv.cpu().numpy(),
+        "online_hv": online_hv.cpu().numpy(),
+        "uspa_hv": ref_hv["uspa_hv"],
+        "random_hv": ref_hv["random_hv"],
+    }
 
     # ----- Fig 1 inset: front width vs delta_phi sweep -----
     delta_sweep: dict = {}
