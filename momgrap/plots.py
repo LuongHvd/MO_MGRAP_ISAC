@@ -67,12 +67,11 @@ def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
     if rnd.shape[0]:
         ax.scatter(rnd[:, 0], rnd[:, 1], marker="x", s=22, color="gray", alpha=0.6, label="random")
 
-    # real-time reachable envelope (union of per-realisation online-optimised fronts):
-    # an optimistic upper bound the offline robust design is measured against.
-    rt = data.reference.get("realtime_front")
-    if rt is not None and getattr(rt, "shape", (0,))[0] > 0:
-        rt = rt[np.argsort(rt[:, 0])]
-        ax.plot(rt[:, 0], rt[:, 1], "--", color="C1", lw=1.6, label="real-time (per-realisation env.)")
+    # NOTE: the real-time envelope is intentionally NOT overlaid here. It is evaluated
+    # per-realisation (S=1, not the robust min-over-regimes objective), so its F_com is
+    # inflated relative to RAMP's robust front -- plotting it on this plane is an
+    # apples-to-oranges comparison that misleadingly dwarfs the proposed front. The
+    # offline-vs-real-time comparison lives in Fig 3 (HV-CDF), where it is fair.
 
     ax.set_xlabel(r"$F_{\mathrm{com}}$  (worst-user rate, bps/Hz)")
     ax.set_ylabel(r"$F_{\mathrm{sen}}$  (worst-target beampattern, dB)")
