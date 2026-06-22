@@ -38,27 +38,32 @@ _COLORS = {
 }
 
 
-def fig1_unified_front(data: ExperimentData, outdir: str = "figures") -> str:
+def fig1_unified_front(data: ExperimentData, outdir: str = "figures",
+                       methods=("adaptive", "no_transfer", "mo_de", "mopso", "pooled")) -> str:
+    """Unified robust fronts (seed-0) of the table methods + USPA/random markers.
+
+    ``methods`` selects which per-method fronts to overlay (RAMP emphasised). NOTE:
+    these are a single seed's fronts; the top-tier methods (RAMP/no-transfer/MO-DE)
+    are statistically tied (see Table I paired CI), so they overlap here — the
+    aggregate "best" claim rests on the table (HV/IGD over all seeds), not on which
+    curve is outermost on one seed. Pass ``methods=("adaptive",)`` for the clean
+    proposed-vs-references version.
+    """
     os.makedirs(outdir, exist_ok=True)
     has_inset = bool(data.delta_sweep)
     fig, ax = plt.subplots(figsize=(6, 4.2))
 
-    # Single curve = the robust front attained by the proposed MO-multitask
-    # framework: the non-dominated envelope over its variants (adaptive / fixed /
-    # no-transfer all share the framework). Plotting one framework front vs the
-    # naive references keeps Fig 1 focused on "the product dominates references"
-    # and the tradeoff; the algorithm comparison lives in Fig 2.
-    import torch
-
-    from .metrics import non_dominated
-
-    parts = [data.unified_fronts[m] for m in ("adaptive", "no_transfer", "fixed_rmp")
-             if data.unified_fronts.get(m) is not None and data.unified_fronts[m].shape[0] > 0]
-    if parts:
-        allpts = np.concatenate(parts, axis=0)
-        env = non_dominated(torch.tensor(allpts)).cpu().numpy()
-        env = env[np.argsort(env[:, 0])]
-        ax.plot(env[:, 0], env[:, 1], "-o", ms=3, color="C0", label="RAMP (proposed)")
+    for m in methods:
+        front = data.unified_fronts.get(m)
+        if front is None or front.shape[0] == 0:
+            continue
+        f = front[np.argsort(front[:, 0])]
+        is_ramp = (m == "adaptive")
+        ax.plot(f[:, 0], f[:, 1], "-o", ms=3,
+                lw=2.4 if is_ramp else 1.2,
+                color=_COLORS.get(m, "C0"), label=_LABELS.get(m, m),
+                alpha=1.0 if is_ramp else 0.75,
+                zorder=6 if is_ramp else 3)
 
     uspa = data.reference["uspa"]
     rnd = data.reference["random"]
