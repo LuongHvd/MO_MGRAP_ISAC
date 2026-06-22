@@ -130,14 +130,18 @@ def fig3_hv_cdf(data: ExperimentData, outdir: str = "figures") -> str:
     offline = np.sort(data.fig3["offline_hv"])
     if offline.size:
         cdf = np.arange(1, offline.size + 1) / offline.size
-        ax.plot(offline, cdf, color="C0", label="offline unified front")
+        ax.plot(offline, cdf, color="C0", lw=2, label="offline RAMP design (one-time)")
 
-    online = data.fig3["online_hv"]
+    # real-time / online reference: re-optimised per realisation (upper bound).
+    # Shown as its OWN empirical CDF for a direct distributional comparison, plus a
+    # light 10-90% spread band.
+    online = np.sort(data.fig3["online_hv"])
     if online.size:
+        rt_cdf = np.arange(1, online.size + 1) / online.size
+        ax.step(online, rt_cdf, where="post", color="C1", lw=2,
+                label="real-time (per-realisation, upper bound)")
         lo, hi = np.percentile(online, [10, 90])
-        med = np.median(online)
-        ax.axvspan(lo, hi, color="C1", alpha=0.18, label="online reference (10–90%)")
-        ax.axvline(med, color="C1", ls="--", lw=1, label="online median")
+        ax.axvspan(lo, hi, color="C1", alpha=0.10)
 
     ax.set_xlabel("hypervolume per realisation")
     ax.set_ylabel("CDF")
